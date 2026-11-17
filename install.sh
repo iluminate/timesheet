@@ -71,6 +71,16 @@ command -v node >/dev/null 2>&1 || die "falta Node 20+ · https://nodejs.org"
 NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
 [ "$NODE_MAJOR" -ge 20 ] || die "Node $NODE_MAJOR no sirve; se necesita 20+"
 
+# Node usa su propio almacén de CAs; en redes con inspección TLS (Zscaler,
+# proxies corporativos) hay que sumar el bundle del sistema.
+CA_BUNDLE=""
+for ca in /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt /etc/ssl/cert.pem; do
+  if [ -f "$ca" ]; then CA_BUNDLE="$ca"; break; fi
+done
+if [ -z "${NODE_EXTRA_CA_CERTS:-}" ] && [ -n "$CA_BUNDLE" ]; then
+  export NODE_EXTRA_CA_CERTS="$CA_BUNDLE"
+fi
+
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT INT TERM
 
@@ -129,6 +139,7 @@ else
       "$SHARE_DIR/node_modules/.bin/playwright" install chromium; then
       warn "no se pudo instalar Chromium"
       say "  prueba: sudo $SHARE_DIR/node_modules/.bin/playwright install --with-deps chromium"
+      say "  si es por certificados corporativos: export NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt"
       say "  timesheet login no funcionará hasta entonces"
     fi
   fi
@@ -138,6 +149,9 @@ cat > "$BIN_DIR/timesheet" <<LAUNCHER
 #!/bin/sh
 # Lanzador de timesheet.
 export PLAYWRIGHT_BROWSERS_PATH="$BROWSERS_DIR"
+if [ -z "\${NODE_EXTRA_CA_CERTS:-}" ] && [ -f "$CA_BUNDLE" ]; then
+  export NODE_EXTRA_CA_CERTS="$CA_BUNDLE"
+fi
 exec node "$SHARE_DIR/timesheet.mjs" "\$@"
 LAUNCHER
 chmod 755 "$BIN_DIR/timesheet"
