@@ -1,16 +1,14 @@
 #!/bin/sh
-# Instalador de timesheet.
+# Instalador de timesheet: un binario estático, sin Node ni navegador.
 #
 #   curl -fsSL https://raw.githubusercontent.com/iluminate/timesheet/main/install.sh | sh
 #
 # Variables:
 #   TIMESHEET_REPO        repo de GitHub (por defecto iluminate/timesheet)
-#   TIMESHEET_VERSION     tag a instalar (por defecto, el ultimo release)
-#   TIMESHEET_BIN_DIR     destino del lanzador (por defecto ~/.local/bin)
-#   TIMESHEET_SHARE_DIR   binario y dependencias (por defecto ~/.local/share/timesheet)
-#   TIMESHEET_HOME        configuracion (por defecto ~/.config/timesheet)
-#   TIMESHEET_SKIP_BROWSER=1  no instala Playwright/Chromium
-#   TIMESHEET_BASE_URL    URL directa con timesheet.mjs (para pruebas locales)
+#   TIMESHEET_VERSION     tag a instalar (por defecto, el último release)
+#   TIMESHEET_BIN_DIR     destino del binario (por defecto ~/.local/bin)
+#   TIMESHEET_HOME        configuración (por defecto ~/.config/timesheet)
+#   TIMESHEET_BASE_URL    URL directa con el binario (para pruebas locales)
 #
 # Uso directo: sh install.sh [--uninstall [--purge]]
 
@@ -18,11 +16,11 @@ set -eu
 
 REPO="${TIMESHEET_REPO:-iluminate/timesheet}"
 BIN_DIR="${TIMESHEET_BIN_DIR:-$HOME/.local/bin}"
-SHARE_DIR="${TIMESHEET_SHARE_DIR:-$HOME/.local/share/timesheet}"
-BROWSERS_DIR="$SHARE_DIR/browsers"
 CONFIG_DIR="${TIMESHEET_HOME:-$HOME/.config/timesheet}"
+SHARE_DIR="${TIMESHEET_SHARE_DIR:-$HOME/.local/share/timesheet}"
 VERSION="${TIMESHEET_VERSION:-latest}"
 BASE_URL="${TIMESHEET_BASE_URL:-}"
+ASSET="timesheet-linux-x86_64"
 
 say() { printf '%s\n' "$*"; }
 ok() { printf '✔ %s\n' "$*"; }
@@ -32,8 +30,8 @@ die() { printf '✘ %s\n' "$*" >&2; exit 1; }
 usage() {
   say "uso: install.sh [--uninstall [--purge]]"
   say ""
-  say "  instala el lanzador en $BIN_DIR/timesheet"
-  say "  el binario y Playwright viven en $SHARE_DIR"
+  say "  instala el binario en $BIN_DIR/timesheet"
+  say "  la configuración vive en $CONFIG_DIR"
 }
 
 uninstall() {
@@ -49,7 +47,7 @@ uninstall() {
 
   if [ -d "$SHARE_DIR" ]; then
     rm -rf "$SHARE_DIR"
-    ok "binario y dependencias eliminados ($SHARE_DIR)"
+    ok "navegador y datos locales eliminados ($SHARE_DIR)"
   fi
 
   if [ "$purge" = "1" ]; then
@@ -61,100 +59,43 @@ uninstall() {
 }
 
 case "${1:-}" in
-  --uninstall) uninstall "${2:-}" ; exit 0 ;;
-  -h|--help) usage ; exit 0 ;;
+  --uninstall) uninstall "${2:-}"; exit 0 ;;
+  -h|--help) usage; exit 0 ;;
 esac
 
+[ "$(uname -s)" = "Linux" ] || die "solo Linux está soportado"
+[ "$(uname -m)" = "x86_64" ] || die "solo x86_64 está soportado"
 command -v curl >/dev/null 2>&1 || die "falta curl"
 command -v sha256sum >/dev/null 2>&1 || die "falta sha256sum (coreutils)"
-command -v node >/dev/null 2>&1 || die "falta Node 20+ · https://nodejs.org"
-NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
-[ "$NODE_MAJOR" -ge 20 ] || die "Node $NODE_MAJOR no sirve; se necesita 20+"
-
-# Node usa su propio almacén de CAs; en redes con inspección TLS (Zscaler,
-# proxies corporativos) hay que sumar el bundle del sistema.
-CA_BUNDLE=""
-for ca in /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt /etc/ssl/cert.pem; do
-  if [ -f "$ca" ]; then CA_BUNDLE="$ca"; break; fi
-done
-if [ -z "${NODE_EXTRA_CA_CERTS:-}" ] && [ -n "$CA_BUNDLE" ]; then
-  export NODE_EXTRA_CA_CERTS="$CA_BUNDLE"
-fi
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT INT TERM
 
 if [ -n "$BASE_URL" ]; then
-  say "→ descargando $BASE_URL/timesheet.mjs"
-  curl -fsSL --retry 3 "$BASE_URL/timesheet.mjs" -o "$TMP/timesheet.mjs" \
-    || die "no se pudo descargar"
-  curl -fsSL --retry 3 "$BASE_URL/timesheet.mjs.sha256" -o "$TMP/timesheet.mjs.sha256" \
-    || die "no se pudo descargar el checksum"
+  URL="$BASE_URL"
 else
   if [ "$VERSION" = "latest" ]; then
     URL="https://github.com/$REPO/releases/latest/download"
   else
     URL="https://github.com/$REPO/releases/download/$VERSION"
   fi
-
-  say "→ descargando release ($REPO · $VERSION)"
-  curl -fsSL --retry 3 "$URL/timesheet.mjs" -o "$TMP/timesheet.mjs" \
-    || die "no se pudo descargar $URL/timesheet.mjs"
-  curl -fsSL --retry 3 "$URL/timesheet.mjs.sha256" -o "$TMP/timesheet.mjs.sha256" \
-    || die "no se pudo descargar el checksum"
 fi
 
-( cd "$TMP" && sha256sum -c timesheet.mjs.sha256 >/dev/null 2>&1 ) \
+say "→ descargando $REPO ($VERSION)"
+curl -fsSL --retry 3 "$URL/$ASSET" -o "$TMP/$ASSET" || die "no se pudo descargar $URL/$ASSET"
+curl -fsSL --retry 3 "$URL/$ASSET.sha256" -o "$TMP/$ASSET.sha256" \
+  || die "no se pudo descargar el checksum"
+
+(cd "$TMP" && sha256sum -c "$ASSET.sha256" >/dev/null 2>&1) \
   || die "checksum inválido; instalación cancelada"
-say "✔ checksum verificado"
 
-mkdir -p "$SHARE_DIR" "$BIN_DIR"
+mkdir -p "$BIN_DIR"
 if command -v install >/dev/null 2>&1; then
-  install -m 755 "$TMP/timesheet.mjs" "$SHARE_DIR/timesheet.mjs"
+  install -m 755 "$TMP/$ASSET" "$BIN_DIR/timesheet"
 else
-  cp "$TMP/timesheet.mjs" "$SHARE_DIR/timesheet.mjs"
-  chmod 755 "$SHARE_DIR/timesheet.mjs"
+  cp "$TMP/$ASSET" "$BIN_DIR/timesheet"
+  chmod 755 "$BIN_DIR/timesheet"
 fi
-
-# Node resuelve `import('playwright')` desde SHARE_DIR/node_modules.
-if [ "${TIMESHEET_SKIP_BROWSER:-0}" = "1" ]; then
-  warn "Playwright omitido (TIMESHEET_SKIP_BROWSER=1); timesheet login no funcionará"
-else
-  command -v npm >/dev/null 2>&1 || die "falta npm (viene con Node) para instalar Playwright"
-
-  if [ -d "$SHARE_DIR/node_modules/playwright" ]; then
-    say "→ Playwright ya instalado"
-  else
-    say "→ instalando Playwright (puede tardar)"
-    npm_config_update_notifier=false npm install --prefix "$SHARE_DIR" \
-      --no-audit --no-fund --loglevel=error playwright \
-      || die "no se pudo instalar Playwright"
-  fi
-
-  if ls "$BROWSERS_DIR"/chromium-* >/dev/null 2>&1; then
-    say "→ Chromium ya instalado"
-  else
-    say "→ descargando Chromium (~150 MB)"
-    if ! PLAYWRIGHT_BROWSERS_PATH="$BROWSERS_DIR" \
-      "$SHARE_DIR/node_modules/.bin/playwright" install chromium; then
-      warn "no se pudo instalar Chromium"
-      say "  prueba: sudo $SHARE_DIR/node_modules/.bin/playwright install --with-deps chromium"
-      say "  si es por certificados corporativos: export NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt"
-      say "  timesheet login no funcionará hasta entonces"
-    fi
-  fi
-fi
-
-cat > "$BIN_DIR/timesheet" <<LAUNCHER
-#!/bin/sh
-# Lanzador de timesheet.
-export PLAYWRIGHT_BROWSERS_PATH="$BROWSERS_DIR"
-if [ -z "\${NODE_EXTRA_CA_CERTS:-}" ] && [ -f "$CA_BUNDLE" ]; then
-  export NODE_EXTRA_CA_CERTS="$CA_BUNDLE"
-fi
-exec node "$SHARE_DIR/timesheet.mjs" "\$@"
-LAUNCHER
-chmod 755 "$BIN_DIR/timesheet"
 
 case ":$PATH:" in
   *":$BIN_DIR:"*) ;;

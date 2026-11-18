@@ -1,8 +1,2 @@
-node_modules/
-dist/
-
-# Sesion y datos personales: nunca al repo
-timesheet/.auth/
-timesheet/state.json
-timesheet/logs/
-timesheet/config.json
+/target/
+/dist/
